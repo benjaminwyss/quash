@@ -1,3 +1,10 @@
 cd
+ls
 ls -l
+ls -a
+pwd
+pwd -P
 quit
+
+
+$PWD - investigate further
