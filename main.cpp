@@ -12,11 +12,11 @@
 std::string path = "";
 std::string home = "";
 char workingDirectory[PATH_MAX];
-int numberOfJobs = 0;
+
 void printJobs();
-void backgroundJob(std::string);
 void pipe(std::string, std::string);
 //bool contains(std::string, char);
+
 struct job {
        int isActive;
  	     int jobid;
@@ -26,8 +26,33 @@ struct job {
 
 std::vector<job> jobs;
 
+void catch_sig_child(int sig_num)
+{
+    pid_t pid;
+    while ((pid = waitpid(-1, NULL, WNOHANG)) != -1)
+    {
+        int i = 0;
+        for (; i < jobs.size(); i++)
+        {
+          if (jobs[i].pid == pid)
+          {
+            std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
+            jobs.erase(jobs.begin() + i);
+          }
+        }
+    }
+}
+
 int main(int argc, char **argv, char **envp)
 {
+  struct sigaction sa;
+  sigset_t mask_set;
+  sigemptyset(&mask_set);
+  sa.sa_mask = mask_set;
+  sa.sa_handler = &catch_sig_child;
+  sigaction(SIGCHLD, &sa, NULL);
+
+
     bool foundPath = false;
     bool foundHome = false;
 
@@ -67,14 +92,6 @@ int main(int argc, char **argv, char **envp)
 
       if (commandStream >> command)
       {
-        //NEED TO FIGURE OUT HOW TO PARSE THE '&' WITHOUT BREAKING OTHER PARSING COMMANDS, I SUCK WITH STRSTREAMS
-        //LIKELY NEED TO FUNCTION OUT THIS SECTION TO PASS THE COMMAND THAT NEEDS TO BE EXECUTED FROM PIPE OR
-        //BACKGROUND PROCESS AS WELL, I LEFT EXECUTION BLANK FOR THE TIME BEING IN THOSE FUNCTIONS
-        // std::string holdCommand = command;
-        // if(commandStream >> command && command == '&')
-        // {
-        //  backgroundJob(holdCommand);
-        // }
         if (command == "echo")
         {
           if (commandStream >> command)
@@ -157,7 +174,7 @@ int main(int argc, char **argv, char **envp)
         }
 
         else if (command == "jobs")
-        {		
+        {
 		      printJobs();
         }
 
@@ -165,14 +182,39 @@ int main(int argc, char **argv, char **envp)
         {
           exit(0);
         }
-	
+
         else
         {
+          bool runInBackground = false;
+
+          //check if the first command has a &
+          if (command.find("&") != std::string::npos)
+          {
+            command.erase(command.find("&"), 1);
+            runInBackground = true;
+          }
+
+          std::string originalCommand = command;
+
           std::vector<std::string> argsVector;
           argsVector.push_back(command);
           while (commandStream >> command)
           {
-            argsVector.push_back(command);
+            if (command == "&")
+            {
+              runInBackground = true;
+            }
+            else if (command.find("&") != std::string::npos)
+            {
+              command.erase(command.find("&"), 1);
+              runInBackground = true;
+              argsVector.push_back(command);
+            }
+            else
+            {
+              argsVector.push_back(command);
+            }
+
           }
 
           char** arg = new char*[argsVector.size() + 1];
@@ -205,7 +247,38 @@ int main(int argc, char **argv, char **envp)
           }
           else
           {
-            wait(NULL);
+            if (!runInBackground)
+            {
+              wait(NULL);
+            }
+            else
+            {
+              int jobNumber = 0;
+              for(;;)
+              {
+                if (jobNumber < jobs.size())
+                {
+                  if (jobs[jobNumber].jobid == jobNumber)
+                  {
+                    jobNumber++;
+                  }
+                  else
+                  {
+                    break;
+                  }
+                }
+                else
+                {
+                  break;
+                }
+              }
+              jobs.push_back(job());
+              jobs[jobs.size() - 1].jobid = jobNumber;
+              jobs[jobs.size() - 1].pid = pid;
+              jobs[jobs.size() - 1].command = originalCommand;
+
+              std::cout << "[" << jobs[jobs.size() - 1].jobid << "]" << "  " << jobs[jobs.size() - 1].pid  << " running in background.\n";
+            }
 
             for (int i = 0; i <= argsVector.size(); i++)
             {
@@ -236,50 +309,11 @@ void printJobs()
 
 	std::cout << "[JOBID]  PID  COMMAND\n";
 	int i;
-	for(i = 0; i < numberOfJobs; i++)
+	for(i = 0; i < jobs.size() - 1; i++)
 	{
 		std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << "  " << jobs[i].command << "\n";
 	}
 
-}
-
-void backgroundJob(std::string command)
-{
-  pid_t pid; // process id
-  pid_t sid; // session id
-  std::string fullCommand = command + " &";
-  pid = fork(); // create a fork
-
-  if(pid == 0)
-  {
-    sid = setsid(); // set a session id
-
-    if(sid < 0) // if the sid is less than 0 then we the fork failed
-    {
-      std::cout << "The fork failed, oops...\n";
-      exit(EXIT_FAILURE);
-    }
-    else
-    {
-
-      std::cout << "[" << numberOfJobs << "]" << "  " << getpid() << " is running in the background.\n";
-      system(fullCommand.c_str()); // temporary execution to test, this will need to be a full bore execution step
-      std::cout << "[" << numberOfJobs << "]" << "  " << getpid() << " finished " << command << ".\n";
-      exit(0);
-    }
-  }
-  else
-  {
-    jobs.push_back(job());
-    jobs[numberOfJobs].jobid = numberOfJobs;
-    jobs[numberOfJobs].pid = pid;
-    jobs[numberOfJobs].command = command;
-    numberOfJobs++;
-    while(waitpid(pid, NULL, WEXITED|WNOHANG) > 0) 
-    {
-    }
-  }
-  
 }
 
 //void pipe(std::string fullCommand) // if we don't end up splitting the string through the stream use this
