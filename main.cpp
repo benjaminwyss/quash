@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fcntl.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -27,11 +28,12 @@ struct job {
 
 std::vector<job> jobs;
 
-void catch_sig_child(int sig_num)
+void catch_sig_child(int sig_num, siginfo_t *siginf, void *nullvar)
 {
     pid_t pid;
-    while ((pid = waitpid(-1, NULL, WNOHANG)) != -1)
+    while (1)
     {
+        pid = siginf->si_pid;
         int i = 0;
         for (; i < jobs.size(); i++)
         {
@@ -42,7 +44,7 @@ void catch_sig_child(int sig_num)
             return;
           }
         }
-	return;
+	      return;
     }
 }
 
@@ -52,7 +54,8 @@ int main(int argc, char **argv, char **envp)
   sigset_t mask_set;
   sigemptyset(&mask_set);
   sa.sa_mask = mask_set;
-  sa.sa_handler = &catch_sig_child;
+  sa.sa_sigaction = &catch_sig_child;
+  sa.sa_flags = SA_SIGINFO;
   sigaction(SIGCHLD, &sa, NULL);
 
 
@@ -189,6 +192,13 @@ int main(int argc, char **argv, char **envp)
         else
         {
           bool runInBackground = false;
+          bool redirectOutput = false;
+          bool redirectInput = false;
+
+          std::string outputStr = "";
+          std::string inputStr = "";
+
+          std::vector<int> pipeIndices;
 
           //check if the first command has a &
           if (command.find("&") != std::string::npos)
@@ -213,6 +223,33 @@ int main(int argc, char **argv, char **envp)
               runInBackground = true;
               argsVector.push_back(command);
             }
+            else if (command == "<")
+            {
+              if (commandStream >> inputStr)
+              {
+                redirectInput = true;
+              }
+              else
+              {
+                std::cout << "Cannot redirect input because no file was provided.\n";
+              }
+            }
+            else if (command == ">")
+            {
+              if (commandStream >> outputStr)
+              {
+                redirectOutput = true;
+              }
+              else
+              {
+                std::cout << "Cannot redirect output because no file was provided.\n";
+              }
+            }
+            else if (command == "|")
+            {
+              argsVector.push_back(command);
+              pipeIndices.push_back(argsVector.size());
+            }
             else
             {
               argsVector.push_back(command);
@@ -224,10 +261,15 @@ int main(int argc, char **argv, char **envp)
 
           for (int i = 0; i < argsVector.size(); i++)
           {
-
-            arg[i] = new char[1000];
-
-            snprintf(arg[i], 999, "%s", argsVector.at(i).c_str());
+            if (argsVector[i] == "|")
+            {
+              arg[i] = (char*)0;
+            }
+            else
+            {
+              arg[i] = new char[1000];
+              snprintf(arg[i], 999, "%s", argsVector.at(i).c_str());
+            }
 
           }
           arg[argsVector.size()] = (char*)0;
@@ -239,86 +281,179 @@ int main(int argc, char **argv, char **envp)
 
           char* env[3] = {pathenv, homeenv, (char*)0};
 
-          pid_t pid = fork();
-          if (pid == 0)
+          int* fds = nullptr;
+          std::vector<pid_t> pids;
+
+          if (pipeIndices.size() > 0)
           {
-            if (execvpe(arg[0], arg, env) < 0)
+            fds = new int[pipeIndices.size() * 2];
+          }
+          for (int i = 0; i < pipeIndices.size(); i++)
+          {
+            pipe(fds + 2*i);
+          }
+          if (pipeIndices.size() > 0)
+          {
+            for (int i = 0; i <= pipeIndices.size(); i++)
             {
-              std::cout << "command '" << arg[0] << "' not found.\n";
-              exit(-1);
+              pid_t pid = fork();
+
+              std::cout << pid << '\n';
+
+              if (pid != 0)
+              {
+                pids.push_back(pid);
+              }
+              
+              if (i == 0)
+              {
+                if (redirectInput)
+                {
+                  int inFile = open(inputStr.c_str(), O_RDONLY);
+                  dup2(inFile, 0);
+                  close(inFile);
+                }
+                dup2(fds[1], 1);
+              }
+              else if (i == pipeIndices.size())
+              {
+                if (redirectOutput)
+                {
+                  int outFile = open(outputStr.c_str(), O_WRONLY | O_TRUNC | O_CREAT);
+                  dup2(outFile, 1);
+                  close(outFile);
+                }
+                dup2(fds[pipeIndices.size() * 2 - 2], 0);
+              }
+              else
+              {
+                dup2(fds[2 * i + 1], 1);
+                dup2(fds[2 * i - 2], 0);
+              }
+              for (int i = 0; i < 2 * pipeIndices.size(); i++)
+              {
+                close(fds[i]);
+              }
+
+              if (pid == 0)
+              {
+                if (i == 0)
+                {
+                  if (execvpe(arg[0], arg, env) < 0)
+                  {
+                    std::cout << "command '" << arg[0] << "' not found.\n";
+                    exit(-1);
+                  }
+                }
+                else
+                {
+                  if (execvpe(arg[0], arg + pipeIndices[i-1], env) < 0)
+                  {
+                    std::cout << "command '" << arg[0] << "' not found.\n";
+                    exit(-1);
+                  }
+                }
+              }
+
+
             }
           }
           else
           {
+            pid_t pid = fork();
+            pids.push_back(pid);
+            if (pid == 0)
+            {
+              if (redirectInput)
+              {
+                int inFile = open(inputStr.c_str(), O_RDONLY);
+                dup2(inFile, 0);
+                close(inFile);
+              }
+              if (redirectOutput)
+              {
+                int outFile = open(outputStr.c_str(), O_WRONLY | O_TRUNC | O_CREAT);
+                dup2(outFile, 1);
+                close(outFile);
+              }
+
+              if (execvpe(arg[0], arg, env) < 0)
+              {
+                std::cout << "command '" << arg[0] << "' not found.\n";
+                exit(-1);
+              }
+            }
+          }
+
+          if (pids[0] > 0)
+          {
             if (!runInBackground)
             {
               int status;
-	      for(;;)
+	            for(;;)
               {
-		pid_t waitID = waitpid(pid, &status, WNOHANG | WUNTRACED);
-		if (waitID == -1)
-		{
-		  //error exit
-		  break;
-		}
-		else if (waitID == 0)
-		{
-		  //still running
-		}
-		else if (waitID == pid)
-		{
-		  if (WIFEXITED(status))
-		  {
-		    //good exit
-		    break;
-		  }
-		  else if (WIFSIGNALED(status))
-		  {
-		    //signal exit
-		    break;
-		  }
-		  else if (WIFSTOPPED(status))
-		  {
-		    //stop exit
-		    break;
-		  }
-		  else
-		  {
-		    //strange exit, possible core dump
-		    break;
-		  }
-		}
-		else
-		{
-		  //waitpid returned something funky
-		  break;
-		}
+		              pid_t waitID = waitpid(pids[0], &status, WNOHANG | WUNTRACED);
+              		if (waitID == -1)
+              		{
+              		  //error exit
+              		  break;
+              		}
+              		else if (waitID == 0)
+              		{
+              		  //still running
+              		}
+              		else if (waitID == pids[0])
+              		{
+              		  if (WIFEXITED(status))
+              		  {
+              		    //good exit
+              		    break;
+              		  }
+              		  else if (WIFSIGNALED(status))
+              		  {
+              		    //signal exit
+              		    break;
+              		  }
+              		  else if (WIFSTOPPED(status))
+              		  {
+              		    //stop exit
+              		    break;
+              		  }
+              		  else
+              		  {
+              		    //strange exit, possible core dump
+              		    break;
+              		  }
+              		}
+              		else
+              		{
+              		  //waitpid returned something funky
+              		  break;
+              		}
               }
             }
             else
             {
               int jobNumber = 0;
-              for(;;)
+              for(; jobNumber < jobs.size(); jobNumber++)
               {
-                if (jobNumber < jobs.size())
+                bool jobNumberTaken = false;
+                for (int i = 0; i < jobs.size(); i++)
                 {
-                  if (jobs[jobNumber].jobid == jobNumber)
+                  if (jobs[i].jobid == jobNumber)
                   {
-                    jobNumber++;
-                  }
-                  else
-                  {
+                    jobNumberTaken = true;
                     break;
                   }
                 }
-                else
+                if (!jobNumberTaken)
                 {
                   break;
                 }
               }
               jobs.push_back(job());
               jobs[jobs.size() - 1].jobid = jobNumber;
-              jobs[jobs.size() - 1].pid = pid;
+              jobs[jobs.size() - 1].pid = pids[0];
               jobs[jobs.size() - 1].command = originalCommand;
 
               std::cout << "[" << jobs[jobs.size() - 1].jobid << "]" << "  " << jobs[jobs.size() - 1].pid  << " running in background.\n";
@@ -329,6 +464,14 @@ int main(int argc, char **argv, char **envp)
               delete[] arg[i];
             }
             delete[] arg;
+            if (fds != nullptr)
+            {
+              for (int i = 0; i < 2*pipeIndices.size(); i++)
+              {
+                close(fds[i]);
+              }
+              delete[] fds;
+            }
           }
         }
       }
@@ -337,15 +480,6 @@ int main(int argc, char **argv, char **envp)
         std::cin.clear();
       }
     }
-
-	//int inFile = open("in.txt", O_RDONLY);
-	//int outFile = open("out.txt", O_WRONLY | O_TRUNC | O_CREAT);
-	//dup2(inFile, 0);
-	//dup2(outFile, 1);
-	//…
-	//close(inFile);
-	//close(outFile);
-
 
     return 0;
 }
