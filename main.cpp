@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <limits>
 
 //NEED TO USE execvpe for creating new processes
 
@@ -38,8 +39,10 @@ void catch_sig_child(int sig_num)
           {
             std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
             jobs.erase(jobs.begin() + i);
+            return;
           }
         }
+	return;
     }
 }
 
@@ -249,7 +252,48 @@ int main(int argc, char **argv, char **envp)
           {
             if (!runInBackground)
             {
-              wait(NULL);
+              int status;
+	      for(;;)
+              {
+		pid_t waitID = waitpid(pid, &status, WNOHANG | WUNTRACED);
+		if (waitID == -1)
+		{
+		  //error exit
+		  break;
+		}
+		else if (waitID == 0)
+		{
+		  //still running
+		}
+		else if (waitID == pid)
+		{
+		  if (WIFEXITED(status))
+		  {
+		    //good exit
+		    break;
+		  }
+		  else if (WIFSIGNALED(status))
+		  {
+		    //signal exit
+		    break;
+		  }
+		  else if (WIFSTOPPED(status))
+		  {
+		    //stop exit
+		    break;
+		  }
+		  else
+		  {
+		    //strange exit, possible core dump
+		    break;
+		  }
+		}
+		else
+		{
+		  //waitpid returned something funky
+		  break;
+		}
+              }
             }
             else
             {
@@ -288,7 +332,10 @@ int main(int argc, char **argv, char **envp)
           }
         }
       }
-
+      else
+      {
+        std::cin.clear();
+      }
     }
 
 	//int inFile = open("in.txt", O_RDONLY);
@@ -309,7 +356,7 @@ void printJobs()
 
 	std::cout << "[JOBID]  PID  COMMAND\n";
 	int i;
-	for(i = 0; i < jobs.size() - 1; i++)
+	for(i = 0; i < jobs.size(); i++)
 	{
 		std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << "  " << jobs[i].command << "\n";
 	}
