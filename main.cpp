@@ -297,14 +297,8 @@ int main(int argc, char **argv, char **envp)
             for (int i = 0; i <= pipeIndices.size(); i++)
             {
               pid_t pid = fork();
-
-              std::cout << pid << '\n';
-
-              if (pid != 0)
+              if (pid == 0)
               {
-                pids.push_back(pid);
-              }
-              
               if (i == 0)
               {
                 if (redirectInput)
@@ -313,7 +307,9 @@ int main(int argc, char **argv, char **envp)
                   dup2(inFile, 0);
                   close(inFile);
                 }
+
                 dup2(fds[1], 1);
+
               }
               else if (i == pipeIndices.size())
               {
@@ -335,26 +331,28 @@ int main(int argc, char **argv, char **envp)
                 close(fds[i]);
               }
 
-              if (pid == 0)
-              {
                 if (i == 0)
                 {
                   if (execvpe(arg[0], arg, env) < 0)
                   {
-                    std::cout << "command '" << arg[0] << "' not found.\n";
+                    std::cerr << "command '" << arg[0] << "' not found.\n";
                     exit(-1);
                   }
                 }
                 else
                 {
-                  if (execvpe(arg[0], arg + pipeIndices[i-1], env) < 0)
+                  if (execvpe(arg[pipeIndices[i-1]], arg + pipeIndices[i-1], env) < 0)
                   {
-                    std::cout << "command '" << arg[0] << "' not found.\n";
+                    std::cerr << "command '" << arg[pipeIndices[i-1]] << "' not found.\n";
                     exit(-1);
                   }
                 }
+       
               }
-
+              else if (pid > 0)
+              {
+                pids.push_back(pid);
+              }
 
             }
           }
@@ -385,14 +383,14 @@ int main(int argc, char **argv, char **envp)
             }
           }
 
-          if (pids[0] > 0)
+          if (pids[pids.size() - 1] > 0)
           {
             if (!runInBackground)
             {
               int status;
 	            for(;;)
               {
-		              pid_t waitID = waitpid(pids[0], &status, WNOHANG | WUNTRACED);
+		              pid_t waitID = waitpid(pids[pids.size() - 1], &status, WNOHANG | WUNTRACED);
               		if (waitID == -1)
               		{
               		  //error exit
@@ -453,7 +451,7 @@ int main(int argc, char **argv, char **envp)
               }
               jobs.push_back(job());
               jobs[jobs.size() - 1].jobid = jobNumber;
-              jobs[jobs.size() - 1].pid = pids[0];
+              jobs[jobs.size() - 1].pid = pids[pids.size() - 1];
               jobs[jobs.size() - 1].command = originalCommand;
 
               std::cout << "[" << jobs[jobs.size() - 1].jobid << "]" << "  " << jobs[jobs.size() - 1].pid  << " running in background.\n";
