@@ -17,8 +17,6 @@ std::string home = "";
 char workingDirectory[PATH_MAX];
 
 void printJobs();
-void pipe(std::string, std::string);
-//bool contains(std::string, char);
 
 struct job {
  	     int jobid;
@@ -187,30 +185,50 @@ int main(int argc, char **argv, char **envp)
         {
           if(commandStream >> command)
           {
+            int signum = -1;
             try //todo let the user specify any signal 
             {
+              signum = std::stoi(command);
             }
             catch (std::invalid_argument& ia)
             {
             }
-            bool isKilled = false;
-            for(int i = 0; i < jobs.size(); i++)
+            if (signum == -1)
             {
-              if(command == std::to_string(jobs[i].jobid))
+              std::cout << "Invalid signum. Signum must be a positive integer.\n";
+            }
+            else
+            {
+              if (commandStream >> command)
               {
-                kill(jobs[i].pid, SIGKILL);
-                isKilled = true;
-                break;
+                bool isKilled = false;
+                for(int i = 0; i < jobs.size(); i++)
+                {
+                  if(command == std::to_string(jobs[i].jobid))
+                  {
+                    if (kill(jobs[i].pid, signum) < 0)
+                    {
+                      std::cout << "Failed to send signal " << signum << " to the process with job id " << command << "!" << '\n';
+                    }
+                    isKilled = true;
+                    break;
+                  }
+                }
+                if(isKilled == false)
+                {
+                  std::cout << "Failed to send signal " << signum << " to the process with job id " << command << "!" << '\n';
+                }
+              }
+              else
+              {
+                std::cout << "Invalid usage. Try 'kill signum jobid'\n";
               }
             }
-            if(isKilled == false)
-            {
-              std::cout << "Failed to kill the process with job id " << command << "!" << '\n';
-            }
+              
           }
           else
           {
-            std::cout << "Cannot kill a process because no signum nor job id was provided.\n";
+            std::cout << "Invalid usage. Try 'kill signum jobid'\n";
           }
         }
 
@@ -492,52 +510,3 @@ void printJobs()
 
 }
 
-//void pipe(std::string fullCommand) // if we don't end up splitting the string through the stream use this
-
-// Assuming we stream in arguments delimitted by white space we can use this version
-void pipe(std::string leftCommand, std::string rightCommand)
-{
-  int fds[2]; // just like in lab...
-  //std::string copyFull = fullCommand; // probably not needed
-  //std::string commandLeft = strtok(copyFull, '|'); // just put the full command in here instead?
-  //std::string commandRight = strtok(NULL, "\n"); // There might be a better function to use to break apart the command
-
-  pid_t pid1;
-  pid_t pid2;
-
-  pid1 = fork();
-  if(pid1 == 0)
-  {
-    dup2(fds[1], STDOUT_FILENO);
-    close(fds[0]);
-    int num = 0;
-    // execute leftCommand here again, need to either make the main loop a function to pass this or find a work around
-    exit(0);
-  }
-
-  pid2 = fork();
-  if(pid2 == 0)
-  {
-    dup2(fds[0], STDIN_FILENO);
-    close(fds[0]);
-    int num = 0;
-    //execute rightCommand here
-  }
-  close(fds[0]);
-  close(fds[1]);
-
-}
-
-// bool contains(std::string s, char c)
-// {
-//   bool isFound = false;
-//   for(int i = 0; i < s.length(); i++)
-//   {
-//     if(s[i] == c)
-//     {
-//       isFound = true;
-//       break;
-//     }
-//   }
-//   return isFound;
-// }
