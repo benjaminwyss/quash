@@ -3,6 +3,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <stdexcept>
 #include <stdlib.h>
 #include <unistd.h>
 #include <limits.h>
@@ -20,9 +21,8 @@ void pipe(std::string, std::string);
 //bool contains(std::string, char);
 
 struct job {
-       int isActive;
  	     int jobid;
-	     int pid;
+	     pid_t pid;
 	     std::string command;
 	   };
 
@@ -37,7 +37,7 @@ void catch_sig_child(int sig_num, siginfo_t *siginf, void *nullvar)
     {
       if (jobs[i].pid == pid)
       {
-        std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
+        std::cout << "[" << jobs[i].jobid << "]" << " " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
         jobs.erase(jobs.begin() + i);
         return;
       }
@@ -187,10 +187,16 @@ int main(int argc, char **argv, char **envp)
         {
           if(commandStream >> command)
           {
+            try //todo let the user specify any signal 
+            {
+            }
+            catch (std::invalid_argument& ia)
+            {
+            }
             bool isKilled = false;
             for(int i = 0; i < jobs.size(); i++)
             {
-              if(std::stoi(command) == jobs[i].jobid)
+              if(command == std::to_string(jobs[i].jobid))
               {
                 kill(jobs[i].pid, SIGKILL);
                 isKilled = true;
@@ -202,11 +208,15 @@ int main(int argc, char **argv, char **envp)
               std::cout << "Failed to kill the process with job id " << command << "!" << '\n';
             }
           }
+          else
+          {
+            std::cout << "Cannot kill a process because no signum nor job id was provided.\n";
+          }
         }
 
         else if (command == "quit" || command == "exit")
         {
-          exit(0);
+          return 0;
         }
 
         else
@@ -377,7 +387,10 @@ int main(int argc, char **argv, char **envp)
           else
           {
             pid_t pid = fork();
-            pids.push_back(pid);
+            if (pid > 0)
+            {
+              pids.push_back(pid);
+            }
             if (pid == 0)
             {
               if (redirectInput)
@@ -403,17 +416,25 @@ int main(int argc, char **argv, char **envp)
 
           if (pids[pids.size() - 1] > 0)
           {
+            for (int i = 0; i < 2*pipeIndices.size(); i++)
+            {
+              close(fds[i]);
+            }
+
             if (!runInBackground)
             {
               int status;
-              pid_t waitID = waitpid(pids[pids.size() - 1], &status, 0);
-              std::cout << waitID << '\n';
+              pid_t waitID;
+              do
+              {
+                
+              } while ((waitID = waitpid(pids[pids.size() - 1], &status, WNOHANG)) == 0);
 
             }
             else
             {
-              int jobNumber = 0;
-              for(; jobNumber < jobs.size(); jobNumber++)
+              int jobNumber = 1;
+              for(; jobNumber < jobs.size() + 1; jobNumber++)
               {
                 bool jobNumberTaken = false;
                 for (int i = 0; i < jobs.size(); i++)
@@ -434,7 +455,7 @@ int main(int argc, char **argv, char **envp)
               jobs[jobs.size() - 1].pid = pids[pids.size() - 1];
               jobs[jobs.size() - 1].command = originalCommand;
 
-              std::cout << "[" << jobs[jobs.size() - 1].jobid << "]" << "  " << jobs[jobs.size() - 1].pid  << " running in background.\n";
+              std::cout << "[" << jobs[jobs.size() - 1].jobid << "]" << " " << jobs[jobs.size() - 1].pid  << " running in background.\n";
             }
 
             for (int i = 0; i <= argsVector.size(); i++)
@@ -444,10 +465,6 @@ int main(int argc, char **argv, char **envp)
             delete[] arg;
             if (fds != nullptr)
             {
-              for (int i = 0; i < 2*pipeIndices.size(); i++)
-              {
-                close(fds[i]);
-              }
               delete[] fds;
             }
           }
