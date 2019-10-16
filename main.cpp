@@ -31,21 +31,18 @@ std::vector<job> jobs;
 void catch_sig_child(int sig_num, siginfo_t *siginf, void *nullvar)
 {
     pid_t pid;
-    while (1)
+    pid = siginf->si_pid;
+    int i = 0;
+    for (; i < jobs.size(); i++)
     {
-        pid = siginf->si_pid;
-        int i = 0;
-        for (; i < jobs.size(); i++)
-        {
-          if (jobs[i].pid == pid)
-          {
-            std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
-            jobs.erase(jobs.begin() + i);
-            return;
-          }
-        }
-	      return;
+      if (jobs[i].pid == pid)
+      {
+        std::cout << "[" << jobs[i].jobid << "]" << "  " << jobs[i].pid << " finished " << jobs[i].command << ".\n";
+        jobs.erase(jobs.begin() + i);
+        return;
+      }
     }
+    return;
 }
 
 int main(int argc, char **argv, char **envp)
@@ -95,6 +92,8 @@ int main(int argc, char **argv, char **envp)
       std::cout << workingDirectory << " > ";
       std::getline(std::cin, command);
       std::stringstream commandStream(command);
+
+      std::string originalCommand = command;
 
       if (commandStream >> command)
       {
@@ -184,6 +183,27 @@ int main(int argc, char **argv, char **envp)
 		      printJobs();
         }
 
+        else if (command == "kill")
+        {
+          if(commandStream >> command)
+          {
+            bool isKilled = false;
+            for(int i = 0; i < jobs.size(); i++)
+            {
+              if(std::stoi(command) == jobs[i].jobid)
+              {
+                kill(jobs[i].pid, SIGKILL);
+                isKilled = true;
+                break;
+              }
+            }
+            if(isKilled == false)
+            {
+              std::cout << "Failed to kill the process with job id " << command << "!" << '\n';
+            }
+          }
+        }
+
         else if (command == "quit" || command == "exit")
         {
           exit(0);
@@ -206,8 +226,6 @@ int main(int argc, char **argv, char **envp)
             command.erase(command.find("&"), 1);
             runInBackground = true;
           }
-
-          std::string originalCommand = command;
 
           std::vector<std::string> argsVector;
           argsVector.push_back(command);
@@ -347,7 +365,7 @@ int main(int argc, char **argv, char **envp)
                     exit(-1);
                   }
                 }
-       
+
               }
               else if (pid > 0)
               {
@@ -388,47 +406,9 @@ int main(int argc, char **argv, char **envp)
             if (!runInBackground)
             {
               int status;
-	            for(;;)
-              {
-		              pid_t waitID = waitpid(pids[pids.size() - 1], &status, WNOHANG | WUNTRACED);
-              		if (waitID == -1)
-              		{
-              		  //error exit
-              		  break;
-              		}
-              		else if (waitID == 0)
-              		{
-              		  //still running
-              		}
-              		else if (waitID == pids[0])
-              		{
-              		  if (WIFEXITED(status))
-              		  {
-              		    //good exit
-              		    break;
-              		  }
-              		  else if (WIFSIGNALED(status))
-              		  {
-              		    //signal exit
-              		    break;
-              		  }
-              		  else if (WIFSTOPPED(status))
-              		  {
-              		    //stop exit
-              		    break;
-              		  }
-              		  else
-              		  {
-              		    //strange exit, possible core dump
-              		    break;
-              		  }
-              		}
-              		else
-              		{
-              		  //waitpid returned something funky
-              		  break;
-              		}
-              }
+              pid_t waitID = waitpid(pids[pids.size() - 1], &status, 0);
+              std::cout << waitID << '\n';
+
             }
             else
             {
